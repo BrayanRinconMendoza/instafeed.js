@@ -32,7 +32,10 @@ function Instafeed(options) {
 
   // state holder
   var state = {
-    running: false
+    running: false,
+    node: null,
+    token: null,
+    paging: null
   };
 
   // copy options over defaults
@@ -70,7 +73,6 @@ function Instafeed(options) {
 
 Instafeed.prototype.run = function run() {
   var scope = this;
-  var node = null;
   var url = null;
   var items = null;
   var html = null;
@@ -90,15 +92,15 @@ Instafeed.prototype.run = function run() {
   // get dom node
   this._debug('run', 'getting dom node');
   if (typeof this._options.target === 'string') {
-    node = document.getElementById(this._options.target);
+    this._state.node = document.getElementById(this._options.target);
   } else {
-    node = this._options.target;
+    this._state.node = this._options.target;
   }
-  if (!node) {
+  if (!this._state.node) {
     this._fail(new Error('no element found with ID ' + this._options.target));
     return false;
   }
-  this._debug('run', 'got dom node', node);
+  this._debug('run', 'got dom node', this._state.node);
 
   // get access token
   this._debug('run', 'getting access token');
@@ -109,45 +111,69 @@ Instafeed.prototype.run = function run() {
       return;
     }
 
-    url = 'https://graph.instagram.com/me/media?fields=caption,id,media_type,media_url,permalink,thumbnail_url,timestamp,username&access_token='+ token;
-    scope._debug('onTokenReceived', 'request url', url);
+    scope._debug('onTokenReceived', 'got token', token);
+    scope._state.token = token;
 
-    // make network request
-    scope._makeApiRequest(url, function onResponseReceived(err, data) {
+    scope._showNext(function onNextShown(err) {
       if (err) {
-        scope._debug('onResponseReceived', 'error', err);
-        scope._fail(new Error('api request error: ' + err.message));
+        scope._debug('onNextShown', 'error', err);
+        scope._fail(err);
         return;
-      }
-      scope._debug('onResponseReceived', 'data', data);
-      scope._success(data);
-
-      try {
-        items = scope._processData(data);
-        scope._debug('onResponseReceived', 'processed data', items);
-      } catch (processErr) {
-        scope._fail(processErr);
-        return;
-      }
-
-      if (scope._options.mock) {
-        scope._debug('onResponseReceived', 'mock enabled, skipping render');
-      } else {
-        try {
-          html = scope._renderData(items);
-          scope._debug('onResponseReceived', 'html content', html);
-        } catch (renderErr) {
-          scope._fail(renderErr);
-          return;
-        }
-        node.innerHTML = html;
       }
 
       scope._finish();
-    });
+    })
   });
 
   return true;
+};
+
+Instafeed.prototype._showNext = function showNext(callback) {
+  var scope = this;
+  var url = 'https://graph.instagram.com/me/media?fields=caption,id,media_type,media_url,permalink,thumbnail_url,timestamp,username&access_token='+ scope._state.token;
+
+  scope._debug('showNext', 'making request', url);
+
+  // make network request
+  scope._makeApiRequest(url, function onResponseReceived(err, data) {
+    var items = null;
+    var html = null;
+
+    if (err) {
+      scope._debug('onResponseReceived', 'error', err);
+      callback(new Error('api request error: ' + err.message));
+      return;
+    }
+
+    scope._debug('onResponseReceived', 'data', data);
+    scope._success(data);
+
+    scope._debug('onResponseReceived', 'setting cursor', data.cursors);
+
+    try {
+      items = scope._processData(data);
+      scope._debug('onResponseReceived', 'processed data', items);
+    } catch (processErr) {
+      callback(processErr);
+      return;
+    }
+
+    if (scope._options.mock) {
+      scope._debug('onResponseReceived', 'mock enabled, skipping render');
+    } else {
+      try {
+        html = scope._renderData(items);
+        scope._debug('onResponseReceived', 'html content', html);
+      } catch (renderErr) {
+        callback(renderErr);
+        return;
+      }
+
+      scope._state.node.innerHTML = html;
+    }
+
+    callback(null);
+  });
 };
 
 Instafeed.prototype._processData = function processData(data) {
